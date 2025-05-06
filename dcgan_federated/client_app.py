@@ -23,24 +23,26 @@ class FlowerClient(NumPyClient):
         self.num_partitions = num_partitions
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        # DCGAN condicional
-        self.nz = 100    # dimensão do ruído
-        self.ngf = 64    # feature maps generator
-        self.ndf = 64    # feature maps discriminator
-        self.nc = 1      # canais da imagem (MNIST)
+        # ——— Hiperparâmetros do modelo (igual ao antes) ———
+        self.nz = 100
+        self.ngf = 64
+        self.ndf = 64
+        self.nc = 1
         self.n_classes = 10
+
+        # ——— 1 época local por rodada (permaneceu 1) ———
         self.local_epochs = 1
 
-        # Load data partition, modelos
+        # ——— Carrega DataLoader SEM augmentação ———
         self.train_loader = load_dataloader(client_id, num_partitions)
+
+        # ——— Inicializa redes e pesos (igual ao antes) ———
         self.generator = Generator(self.nz, self.ngf, self.nc, self.n_classes).to(self.device)
         self.discriminator = Discriminator(self.ndf, self.nc, self.n_classes).to(self.device)
-
-        # Inicializa pesos
         self.generator.apply(weights_init)
         self.discriminator.apply(weights_init)
 
-        # Optimizers e adversarial loss
+        # ——— Otimizadores e loss (igual ao antes) ———
         self.optimizer_G = torch.optim.Adam(
             self.generator.parameters(), lr=0.0002, betas=(0.5, 0.999)
         )
@@ -58,6 +60,7 @@ class FlowerClient(NumPyClient):
         set_parameters(self.discriminator, parameters[gen_len:])
 
     def fit(self, parameters, config):
+        # RECEBE parâmetros globais e treina 1 época local
         self.set_parameters(parameters, config)
         loss_G, loss_D, history = train_cgan(
             generator=self.generator,
@@ -69,6 +72,7 @@ class FlowerClient(NumPyClient):
             epochs=self.local_epochs,
             device=self.device,
         )
+        # Cliente 0 salva gerador local e histórico (igual ao antes)
         if self.client_id == 0:
             torch.save(self.generator.state_dict(), "generator_client0.pt")
             with open("loss_history.json", "w") as f:
@@ -80,6 +84,7 @@ class FlowerClient(NumPyClient):
         )
 
     def evaluate(self, parameters, config):
+        # Avaliação igual ao antes
         self.set_parameters(parameters, config)
         metrics = evaluate_cgan(
             generator=self.generator,
@@ -90,10 +95,10 @@ class FlowerClient(NumPyClient):
         )
         return float(metrics["loss"]), len(self.train_loader.dataset), {"loss": metrics["loss"]}
 
-
 def client_fn(context: Context):
     pid = int(context.node_config.get("partition-id", context.node_id))
     nparts = int(context.node_config.get("num-partitions", pid + 1))
     return FlowerClient(pid, nparts).to_client()
 
+# ——— Permaneceu igual: declaração do app do cliente ———
 app = ClientApp(client_fn)

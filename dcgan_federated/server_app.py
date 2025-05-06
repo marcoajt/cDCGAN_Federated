@@ -2,10 +2,11 @@
 """gan-federated: A Flower / PyTorch cDCGAN server app com agregação de losses."""
 
 from typing import List, Tuple
+import torch
 from flwr.common import Context, ndarrays_to_parameters, Metrics
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedAvg
-from dcgan_federated.task import Generator, Discriminator, get_weights
+from dcgan_federated.task import Generator, Discriminator, get_weights, set_parameters
 
 def weighted_accuracy(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     accuracies = [n * m.get("accuracy", 0.0) for n, m in metrics]
@@ -19,14 +20,17 @@ def aggregate_fit_losses(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     return {"loss_G": avg_G, "loss_D": avg_D}
 
 def server_fn(context: Context) -> ServerAppComponents:
-    # Lê configurações
-    rounds = context.run_config["num-server-rounds"]
-    frac_fit = context.run_config["fraction-fit"]
+    # ——— Modificação: fixar 50 rounds de comunicação ———
+    rounds = 50
 
-    # DCGAN condicional
+    frac_fit = context.run_config.get("fraction-fit", 0.5)
+
+    # Mesmos hiperparâmetros do Generator e Discriminator
     nz, ngf, ndf, nc, n_classes = 100, 64, 64, 1, 10
     gen = Generator(nz, ngf, nc, n_classes)
     disc = Discriminator(ndf, nc, n_classes)
+
+    # Parâmetros iniciais aleatórios (serão sobrescritos no primeiro fit)
     ndarrays = get_weights(gen) + get_weights(disc)
     params = ndarrays_to_parameters(ndarrays)
 
@@ -41,4 +45,17 @@ def server_fn(context: Context) -> ServerAppComponents:
     config = ServerConfig(num_rounds=rounds)
     return ServerAppComponents(strategy=strategy, config=config)
 
+# ——— Modificação: declara app no nível do módulo ———
 app = ServerApp(server_fn=server_fn)
+
+if __name__ == "__main__":
+    app.run()
+
+    # ——— Modificação: após os 50 rounds, salvar o gerador global ———
+    nz, ngf, nc, n_classes = 100, 64, 1, 10
+    gen = Generator(nz, ngf, nc, n_classes)
+    params = app.strategy.parameters           # parâmetros finais
+    gen_len = len(gen.state_dict())
+    set_parameters(gen, params.tensors[:gen_len])
+    torch.save(gen.state_dict(), "generator_global.pt")
+    print("✔ Gerador global salvo em generator_global.pt")
